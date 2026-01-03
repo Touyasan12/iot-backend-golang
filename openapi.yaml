@@ -1,0 +1,1034 @@
+openapi: 3.0.3
+info:
+  title: Smart Aquarium Controller API
+  description: |
+    REST API untuk Smart Aquarium Controller dengan fitur Automatic Feeder dan UV Sterilizer.
+
+    ## Fitur Utama
+    - **Automatic Feeder**: Sistem pemberian pakan dengan mekanisme Double Gate
+    - **UV Sterilizer**: Kontrol lampu UV dengan penjadwalan dan manual override
+    - **Scheduler**: Penjadwalan otomatis untuk feeding dan UV
+    - **History**: Log semua aktivitas device
+
+    ## Demo Mode
+    API ini mendukung demo mode yang mensimulasikan device responses tanpa memerlukan MQTT broker atau hardware.
+  version: 1.0.0
+  contact:
+    name: API Support
+    email: support@aquarium.local
+  license:
+    name: MIT
+    url: https://opensource.org/licenses/MIT
+
+servers:
+  - url: https://iot-backend-cursor-production.up.railway.app/api/v1
+    description: Local development server (default)
+  - url: https://iot-backend-cursor-production.up.railway.app/api/v1
+    description: Production server
+
+tags:
+  - name: Dashboard
+    description: Dashboard data dan status overview
+  - name: Feeder
+    description: Operasi untuk Automatic Feeder
+  - name: UV
+    description: Operasi untuk UV Sterilizer
+  - name: History
+    description: History dan log aktivitas
+  - name: Stock
+    description: Manajemen stock pakan
+  - name: Sensors
+    description: Sensor monitoring (temperature dan humidity)
+  - name: Demo
+    description: Endpoint untuk demo mode
+
+paths:
+  /dashboard:
+    get:
+      tags:
+        - Dashboard
+      summary: Get dashboard data
+      description: |
+        Mengambil data lengkap dashboard termasuk stock, status UV, dan status feeder.
+
+        **Note**: Untuk mengambil history, gunakan endpoint `/history` yang sudah tersedia dengan support pagination dan filtering.
+      operationId: getDashboard
+      responses:
+        "200":
+          description: Dashboard data berhasil diambil
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardResponse"
+              example:
+                stock:
+                  amount_gram: 1000
+                uv:
+                  state: "OFF"
+                  remaining: 0
+                  last_updated: "2025-11-19T09:26:00Z"
+                  manual_active: false
+                feeder:
+                  status: "IDLE"
+                  last_updated: "2025-11-19T09:26:00Z"
+
+  /feeder/schedules:
+    get:
+      tags:
+        - Feeder
+      summary: Get all feeder schedules
+      description: Mengambil semua jadwal pakan yang telah dikonfigurasi dengan pagination
+      operationId: getFeederSchedules
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page (max 100)
+      responses:
+        "200":
+          description: List jadwal pakan dengan pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/PakanSchedule"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+    post:
+      tags:
+        - Feeder
+      summary: Create new feeder schedule
+      description: Membuat jadwal pakan baru. Maksimal 5 jadwal per hari.
+      operationId: createFeederSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PakanScheduleInput"
+            example:
+              day_name: "Monday"
+              time: "08:00"
+              amount_gram: 10
+              is_active: true
+      responses:
+        "201":
+          description: Jadwal berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PakanSchedule"
+        "400":
+          description: Bad request (misal sudah ada 5 jadwal di hari tersebut)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+
+  /feeder/schedules/{id}:
+    put:
+      tags:
+        - Feeder
+      summary: Update feeder schedule
+      description: Update jadwal pakan yang sudah ada
+      operationId: updateFeederSchedule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID jadwal pakan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PakanScheduleInput"
+      responses:
+        "200":
+          description: Jadwal berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PakanSchedule"
+        "404":
+          description: Jadwal tidak ditemukan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+    delete:
+      tags:
+        - Feeder
+      summary: Delete feeder schedule
+      description: Menghapus jadwal pakan
+      operationId: deleteFeederSchedule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID jadwal pakan
+      responses:
+        "200":
+          description: Jadwal berhasil dihapus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Schedule deleted"
+        "404":
+          description: Jadwal tidak ditemukan
+
+  /feeder/manual:
+    post:
+      tags:
+        - Feeder
+      summary: Trigger manual feed
+      description: |
+        Memicu pemberian pakan secara manual. 
+        Sistem akan langsung mengurangi stock tanpa delay.
+        User dapat menentukan jumlah pakan dalam gram (default 10 gram jika tidak diisi).
+      operationId: manualFeed
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                amount_gram:
+                  type: integer
+                  minimum: 1
+                  description: Jumlah pakan dalam gram (kelipatan 10 gram per dosis)
+                  example: 15
+            example:
+              amount_gram: 15
+      responses:
+        "200":
+          description: Command berhasil dikirim
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Feeding command sent"
+                  action_id:
+                    type: integer
+                    example: 26
+                  amount_gram:
+                    type: integer
+                    example: 15
+                  last_feed:
+                    $ref: "#/components/schemas/LastFeedInfo"
+              example:
+                message: "Feeding command sent"
+                action_id: 26
+                amount_gram: 15
+                last_feed:
+                  day: "Wednesday"
+                  time: "08:00"
+
+  /feeder/last-feed:
+    get:
+      tags:
+        - Feeder
+      summary: Get last feed information
+      description: Mengambil informasi pakan terakhir yang berhasil dilakukan
+      operationId: getLastFeedInfo
+      responses:
+        "200":
+          description: Informasi pakan terakhir
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/LastFeedInfoResponse"
+                  - type: object
+                    properties:
+                      exists:
+                        type: boolean
+                        example: false
+                      message:
+                        type: string
+                        example: "No previous feed found"
+
+  /uv/schedules:
+    get:
+      tags:
+        - UV
+      summary: Get all UV schedules
+      description: Mengambil semua jadwal UV yang telah dikonfigurasi dengan pagination
+      operationId: getUVSchedules
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 100
+            default: 20
+          description: Number of items per page (max 100)
+      responses:
+        "200":
+          description: List jadwal UV dengan pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/UVSchedule"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+    post:
+      tags:
+        - UV
+      summary: Create new UV schedule
+      description: Membuat jadwal UV baru
+      operationId: createUVSchedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UVScheduleInput"
+            example:
+              day_name: "Monday"
+              start_time: "20:00"
+              end_time: "04:00"
+              is_active: true
+      responses:
+        "201":
+          description: Jadwal berhasil dibuat
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UVSchedule"
+
+  /uv/schedules/{id}:
+    put:
+      tags:
+        - UV
+      summary: Update UV schedule
+      description: Update jadwal UV yang sudah ada
+      operationId: updateUVSchedule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID jadwal UV
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UVScheduleInput"
+      responses:
+        "200":
+          description: Jadwal berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UVSchedule"
+        "404":
+          description: Jadwal tidak ditemukan
+    delete:
+      tags:
+        - UV
+      summary: Delete UV schedule
+      description: Menghapus jadwal UV
+      operationId: deleteUVSchedule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+          description: ID jadwal UV
+      responses:
+        "200":
+          description: Jadwal berhasil dihapus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Schedule deleted"
+
+  /uv/manual:
+    post:
+      tags:
+        - UV
+      summary: Trigger manual UV
+      description: |
+        Menyalakan UV secara manual dengan durasi tertentu.
+        Manual UV memiliki prioritas override terhadap jadwal otomatis.
+      operationId: manualUV
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - duration_minutes
+              properties:
+                duration_minutes:
+                  type: integer
+                  minimum: 1
+                  description: Durasi UV menyala dalam menit
+                  example: 120
+            example:
+              duration_minutes: 120
+      responses:
+        "200":
+          description: Command berhasil dikirim
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "UV command sent"
+                  action_id:
+                    type: integer
+                    example: 15
+                  duration_sec:
+                    type: integer
+                    example: 7200
+                  end_time:
+                    type: string
+                    format: date-time
+                    example: "2025-11-19T11:26:00Z"
+        "400":
+          description: Bad request (durasi tidak valid)
+
+  /uv/manual/stop:
+    post:
+      tags:
+        - UV
+      summary: Stop running manual UV
+      description: Menghentikan manual UV override sebelum durasi selesai.
+      operationId: stopManualUV
+      responses:
+        "200":
+          description: Manual UV berhasil dihentikan
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Manual UV stopped"
+                  action_id:
+                    type: integer
+                    example: 15
+                  stopped_at:
+                    type: string
+                    format: date-time
+                    example: "2025-11-19T10:00:00Z"
+        "404":
+          description: Tidak ada manual UV yang sedang berjalan
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /uv/status:
+    get:
+      tags:
+        - UV
+      summary: Get UV status
+      description: Mengambil status UV saat ini termasuk sisa waktu jika manual mode aktif
+      operationId: getUVStatus
+      responses:
+        "200":
+          description: Status UV
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UVStatus"
+
+  /history:
+    get:
+      tags:
+        - History
+      summary: Get action history
+      description: Mengambil history aktivitas dengan optional filtering dan pagination
+      operationId: getHistory
+      parameters:
+        - name: device_type
+          in: query
+          schema:
+            type: string
+            enum: [FEEDER, UV]
+          description: Filter by device type
+        - name: trigger_source
+          in: query
+          schema:
+            type: string
+            enum: [SCHEDULE, MANUAL]
+          description: Filter by trigger source
+        - name: status
+          in: query
+          schema:
+            type: string
+            enum: [PENDING, RUNNING, SUCCESS, FAILED, STOPPED]
+          description: Filter by status
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Number of items per page (max 200)
+      responses:
+        "200":
+          description: List history dengan pagination
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/ActionHistory"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+
+  /stock:
+    get:
+      tags:
+        - Stock
+      summary: Get current stock
+      description: Mengambil jumlah stock pakan saat ini
+      operationId: getStock
+      responses:
+        "200":
+          description: Stock data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stock"
+    put:
+      tags:
+        - Stock
+      summary: Update stock
+      description: Update jumlah stock pakan
+      operationId: updateStock
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required:
+                - amount_gram
+              properties:
+                amount_gram:
+                  type: integer
+                  minimum: 0
+                  description: Jumlah stock dalam gram
+                  example: 2000
+      responses:
+        "200":
+          description: Stock berhasil diupdate
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Stock"
+        "400":
+          description: Bad request (amount negatif)
+
+  /sensors/current:
+    get:
+      tags:
+        - Sensors
+      summary: Get current sensor readings
+      description: Mengambil pembacaan sensor terbaru (temperature dan humidity)
+      operationId: getCurrentSensor
+      responses:
+        "200":
+          description: Current sensor data
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SensorLog"
+              example:
+                id: 1
+                temperature: 27.5
+                humidity: 65.0
+                recorded_at: "2025-11-19T09:30:00Z"
+        "404":
+          description: No sensor data available
+
+  /sensors/history:
+    get:
+      tags:
+        - Sensors
+      summary: Get sensor history
+      description: Mengambil history pembacaan sensor dengan pagination dan filter time range
+      operationId: getSensorHistory
+      parameters:
+        - name: page
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            default: 1
+          description: Page number
+        - name: page_size
+          in: query
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 200
+            default: 50
+          description: Number of items per page (max 200)
+        - name: range
+          in: query
+          schema:
+            type: string
+            enum: [24h, 7d, 30d]
+          description: Time range filter (24h = last 24 hours, 7d = last 7 days, 30d = last 30 days)
+      responses:
+        "200":
+          description: Paginated sensor history
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: "#/components/schemas/SensorLog"
+                  pagination:
+                    $ref: "#/components/schemas/PaginationMeta"
+              example:
+                data:
+                  - id: 100
+                    temperature: 27.5
+                    humidity: 65.0
+                    recorded_at: "2025-11-19T09:30:00Z"
+                  - id: 99
+                    temperature: 27.3
+                    humidity: 64.5
+                    recorded_at: "2025-11-19T09:25:00Z"
+                pagination:
+                  page: 1
+                  page_size: 50
+                  total: 250
+                  total_pages: 5
+
+  /demo/seed:
+    post:
+      tags:
+        - Demo
+      summary: Seed demo data
+      description: |
+        Mengisi database dengan data demo termasuk:
+        - Stock pakan: 1000 gram
+        - Sample jadwal pakan untuk beberapa hari
+        - Sample jadwal UV untuk setiap hari
+        - Sample history untuk 7 hari terakhir
+      operationId: seedDemoData
+      responses:
+        "200":
+          description: Demo data berhasil di-seed
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Demo data seeded successfully"
+                  stock:
+                    type: integer
+                    example: 1000
+                  schedules:
+                    type: object
+                    properties:
+                      feeder:
+                        type: integer
+                        example: 11
+                      uv:
+                        type: integer
+                        example: 7
+
+  /demo/clear:
+    post:
+      tags:
+        - Demo
+      summary: Clear demo data
+      description: Menghapus semua data demo (schedules dan history)
+      operationId: clearDemoData
+      responses:
+        "200":
+          description: Demo data berhasil dihapus
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  message:
+                    type: string
+                    example: "Demo data cleared"
+
+components:
+  schemas:
+    PakanSchedule:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        day_name:
+          type: string
+          enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+          example: "Mon"
+        time:
+          type: string
+          pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+          description: Waktu dalam format HH:MM
+          example: "08:00"
+        amount_gram:
+          type: integer
+          minimum: 1
+          default: 10
+          description: Jumlah pakan dalam gram
+          example: 10
+        is_active:
+          type: boolean
+          default: true
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    PakanScheduleInput:
+      type: object
+      required:
+        - day_name
+        - time
+      properties:
+        day_name:
+          type: string
+          enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+        time:
+          type: string
+          pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+        amount_gram:
+          type: integer
+          minimum: 1
+          default: 10
+        is_active:
+          type: boolean
+          default: true
+
+    UVSchedule:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        day_name:
+          type: string
+          enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+          example: "Mon"
+        start_time:
+          type: string
+          pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+          description: Waktu mulai dalam format HH:MM
+          example: "20:00"
+        end_time:
+          type: string
+          pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+          description: Waktu selesai dalam format HH:MM
+          example: "04:00"
+        is_active:
+          type: boolean
+          default: true
+          example: true
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    UVScheduleInput:
+      type: object
+      required:
+        - day_name
+        - start_time
+        - end_time
+      properties:
+        day_name:
+          type: string
+          enum: [Mon, Tue, Wed, Thu, Fri, Sat, Sun]
+        start_time:
+          type: string
+          pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+        end_time:
+          type: string
+          pattern: "^([0-1][0-9]|2[0-3]):[0-5][0-9]$"
+        is_active:
+          type: boolean
+          default: true
+
+    ActionHistory:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        device_type:
+          type: string
+          enum: [FEEDER, UV]
+          example: "FEEDER"
+        trigger_source:
+          type: string
+          enum: [SCHEDULE, MANUAL]
+          example: "MANUAL"
+        start_time:
+          type: string
+          format: date-time
+          example: "2025-11-19T09:26:00Z"
+        end_time:
+          type: string
+          format: date-time
+          nullable: true
+          example: "2025-11-19T09:26:05Z"
+        status:
+          type: string
+          enum: [PENDING, RUNNING, SUCCESS, FAILED, STOPPED]
+          example: "SUCCESS"
+        value:
+          type: integer
+          description: |
+            Nilai dalam satuan yang sesuai dengan device_type:
+            - **FEEDER**: Jumlah pakan dalam gram (e.g., 10, 15, 20)
+            - **UV**: Durasi dalam detik (e.g., 7200 untuk 2 jam, 28800 untuk 8 jam)
+
+            Untuk UV schedule, value berisi remaining duration dari waktu schedule dimulai hingga selesai.
+          example: 10
+        created_at:
+          type: string
+          format: date-time
+        updated_at:
+          type: string
+          format: date-time
+
+    Stock:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        amount_gram:
+          type: integer
+          minimum: 0
+          description: Jumlah stock dalam gram
+          example: 1000
+        updated_at:
+          type: string
+          format: date-time
+
+    SensorLog:
+      type: object
+      properties:
+        id:
+          type: integer
+          example: 1
+        temperature:
+          type: number
+          format: float
+          description: Temperature in Celsius
+          example: 27.5
+        humidity:
+          type: number
+          format: float
+          description: Humidity percentage
+          example: 65.0
+        recorded_at:
+          type: string
+          format: date-time
+          example: "2025-11-19T09:30:00Z"
+
+    DeviceStatus:
+      type: object
+      properties:
+        status:
+          type: string
+          enum: [IDLE, DISPENSING, ON, OFF]
+          example: "IDLE"
+        remaining:
+          type: integer
+          description: Sisa waktu dalam detik (untuk UV)
+          example: 0
+        last_updated:
+          type: string
+          format: date-time
+
+    UVStatus:
+      type: object
+      properties:
+        state:
+          type: string
+          enum: [ON, OFF]
+          example: "OFF"
+        remaining:
+          type: integer
+          description: Sisa waktu dalam detik (jika manual mode aktif)
+          example: 0
+        last_updated:
+          type: string
+          format: date-time
+        manual_active:
+          type: boolean
+          description: Apakah manual UV sedang aktif
+          example: false
+        manual_end_time:
+          type: string
+          format: date-time
+          nullable: true
+          description: Waktu selesai manual UV (jika aktif)
+
+    LastFeedInfo:
+      type: object
+      properties:
+        day:
+          type: string
+          example: "Wednesday"
+        time:
+          type: string
+          example: "08:00"
+
+    LastFeedInfoResponse:
+      type: object
+      required:
+        - exists
+      properties:
+        exists:
+          type: boolean
+          example: true
+        day:
+          type: string
+          example: "Wednesday"
+        time:
+          type: string
+          example: "08:00"
+        date:
+          type: string
+          format: date
+          example: "2025-11-19"
+
+    DashboardResponse:
+      type: object
+      properties:
+        stock:
+          type: object
+          properties:
+            amount_gram:
+              type: integer
+              example: 1000
+        uv:
+          $ref: "#/components/schemas/UVStatus"
+        feeder:
+          $ref: "#/components/schemas/DeviceStatus"
+        environment:
+          type: object
+          nullable: true
+          properties:
+            temperature:
+              type: number
+              format: float
+              description: Temperature in Celsius
+              example: 27.5
+            humidity:
+              type: number
+              format: float
+              description: Humidity percentage
+              example: 65.0
+            last_updated:
+              type: string
+              format: date-time
+              example: "2025-11-19T09:30:00Z"
+
+    Error:
+      type: object
+      properties:
+        error:
+          type: string
+          example: "Error message here"
+
+    PaginationMeta:
+      type: object
+      properties:
+        page:
+          type: integer
+          description: Current page number
+          example: 1
+        page_size:
+          type: integer
+          description: Number of items per page
+          example: 20
+        total:
+          type: integer
+          description: Total number of records
+          example: 156
+        total_pages:
+          type: integer
+          description: Total number of pages
+          example: 8

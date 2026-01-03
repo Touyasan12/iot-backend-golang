@@ -1,0 +1,16 @@
+{
+  "name": "aquarium-api-docs",
+  "version": "1.0.0",
+  "description": "OpenAPI documentation for Smart Aquarium Controller",
+  "scripts": {
+    "validate": "swagger-cli validate openapi.yaml",
+    "bundle": "swagger-cli bundle openapi.yaml -o openapi-bundled.yaml",
+    "serve": "swagger-ui-serve openapi.yaml",
+    "redoc": "redoc-cli serve openapi.yaml"
+  },
+  "devDependencies": {
+    "@apidevtools/swagger-cli": "^4.0.4",
+    "redoc-cli": "^0.13.21"
+  }
+}
+
