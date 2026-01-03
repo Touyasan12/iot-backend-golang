@@ -137,64 +137,55 @@ func ManualFeed(c *gin.Context) {
 	amountGram := utils.NormalizeFeedAmount(req.AmountGram)
 	doses := utils.CalculateFeedDoses(amountGram)
 
-	// Get last successful feed
+	// Get last successful feed (buat return response)
 	var lastFeed models.ActionHistory
-	err := database.DB.Where("device_type = ? AND status = ?", "FEEDER", "SUCCESS").
+	database.DB.Where("device_type = ? AND status = ?", "FEEDER", "SUCCESS").
 		Order("start_time DESC").
-		First(&lastFeed).Error
+		First(&lastFeed)
 
-	// Create action history entry
+	// Create action history
 	action := models.ActionHistory{
 		DeviceType:    "FEEDER",
 		TriggerSource: "MANUAL",
 		StartTime:     time.Now(),
-		Status:        "PENDING",
+		Status:        "SUCCESS", 
 		Value:         amountGram,
-	}
-
-	if err := database.DB.Create(&action).Error; err != nil {
-		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
-		return
 	}
 
 	// Publish MQTT command
 	if err := mqtt.PublishFeederCommand(doses); err != nil {
 		action.Status = "FAILED"
-		database.DB.Save(&action)
+		database.DB.Create(&action) 
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to device"})
 		return
 	}
-	
-	//  Update status history to running
-	action.Status = "RUNNING"
-	database.DB.Save(&action)
+
+	// Simpan history SUCCESS ke database
+	if err := database.DB.Create(&action).Error; err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 
 	var stock models.Stock
 	if err := database.DB.First(&stock).Error; err == nil {
-		// Decrease stock by the amount given
 		stock.AmountGram -= amountGram
-		
-		// Validate to prevent negative stock
 		if stock.AmountGram < 0 {
 			stock.AmountGram = 0
 		}
-		
-		// Save stock changes to DB
 		database.DB.Save(&stock)
 	}
 
-	// Prepare response with last feed info
+	// Prepare response
 	response := gin.H{
-		"message":     "Feeding command sent",
+		"message":     "Feeding command sent & success",
 		"action_id":   action.ID,
 		"amount_gram": amountGram,
 	}
 
-	if err == nil {
-		response["last_feed"] = gin.H{
-			"day":  lastFeed.StartTime.Format("Monday"),
-			"time": lastFeed.StartTime.Format("15:04"),
-		}
+	// Update last feed info buat response langsung
+	response["last_feed"] = gin.H{
+		"day":  action.StartTime.Format("Monday"),
+		"time": action.StartTime.Format("15:04"),
 	}
 
 	c.JSON(http.StatusOK, response)
