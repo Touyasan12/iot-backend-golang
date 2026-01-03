@@ -164,9 +164,24 @@ func ManualFeed(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to device"})
 		return
 	}
-
+	
+	//  Update status history to running
 	action.Status = "RUNNING"
 	database.DB.Save(&action)
+
+	var stock models.Stock
+	if err := database.DB.First(&stock).Error; err == nil {
+		// Decrease stock by the amount given
+		stock.AmountGram -= amountGram
+		
+		// Validate to prevent negative stock
+		if stock.AmountGram < 0 {
+			stock.AmountGram = 0
+		}
+		
+		// Save stock changes to DB
+		database.DB.Save(&stock)
+	}
 
 	// Prepare response with last feed info
 	response := gin.H{
