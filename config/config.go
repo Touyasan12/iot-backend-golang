@@ -28,8 +28,13 @@ func LoadConfig() *Config {
 
 	demoMode := getEnv("DEMO_MODE", "false") == "true"
 
+	port := os.Getenv("PORT")
+    if port == "" {
+        port = getEnv("SERVER_PORT", "8080")
+    }
+
 	config := &Config{
-		ServerPort:   getEnv("SERVER_PORT", "8080"),
+		ServerPort:   port,
 		DBHost:       getEnv("DB_HOST", "localhost"),
 		DBPort:       getEnv("DB_PORT", "5432"),
 		DBUser:       getEnv("DB_USER", "postgres"),
