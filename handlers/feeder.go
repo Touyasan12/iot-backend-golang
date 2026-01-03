@@ -137,55 +137,49 @@ func ManualFeed(c *gin.Context) {
 	amountGram := utils.NormalizeFeedAmount(req.AmountGram)
 	doses := utils.CalculateFeedDoses(amountGram)
 
-	// Get last successful feed (buat return response)
+	// Get last successful feed
 	var lastFeed models.ActionHistory
-	database.DB.Where("device_type = ? AND status = ?", "FEEDER", "SUCCESS").
+	err := database.DB.Where("device_type = ? AND status = ?", "FEEDER", "SUCCESS").
 		Order("start_time DESC").
-		First(&lastFeed)
+		First(&lastFeed).Error
 
-	// Create action history
+	// Create action history entry
 	action := models.ActionHistory{
 		DeviceType:    "FEEDER",
 		TriggerSource: "MANUAL",
 		StartTime:     time.Now(),
-		Status:        "SUCCESS", 
+		Status:        "PENDING",
 		Value:         amountGram,
 	}
 
-	// Publish MQTT command
-	if err := mqtt.PublishFeederCommand(doses); err != nil {
-		action.Status = "FAILED"
-		database.DB.Create(&action) 
-		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to device"})
-		return
-	}
-
-	// Simpan history SUCCESS ke database
 	if err := database.DB.Create(&action).Error; err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
 
-	var stock models.Stock
-	if err := database.DB.First(&stock).Error; err == nil {
-		stock.AmountGram -= amountGram
-		if stock.AmountGram < 0 {
-			stock.AmountGram = 0
-		}
-		database.DB.Save(&stock)
+	// Publish MQTT command
+	if err := mqtt.PublishFeederCommand(doses); err != nil {
+		action.Status = "FAILED"
+		database.DB.Save(&action)
+		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to send command to device"})
+		return
 	}
 
-	// Prepare response
+	action.Status = "RUNNING"
+	database.DB.Save(&action)
+
+	// Prepare response with last feed info
 	response := gin.H{
-		"message":     "Feeding command sent & success",
+		"message":     "Feeding command sent",
 		"action_id":   action.ID,
 		"amount_gram": amountGram,
 	}
 
-	// Update last feed info buat response langsung
-	response["last_feed"] = gin.H{
-		"day":  action.StartTime.Format("Monday"),
-		"time": action.StartTime.Format("15:04"),
+	if err == nil {
+		response["last_feed"] = gin.H{
+			"day":  lastFeed.StartTime.Format("Monday"),
+			"time": lastFeed.StartTime.Format("15:04"),
+		}
 	}
 
 	c.JSON(http.StatusOK, response)
