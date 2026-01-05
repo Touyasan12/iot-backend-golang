@@ -190,9 +190,10 @@ func checkUVSchedules(dayName string, currentHour, currentMinute int) {
 			}
 
 			endTime = time.Now().Add(time.Duration(durationMinutes) * time.Minute)
+			durationSec := durationMinutes * 60 // Convert to seconds
 
 			// Step 1: Publish MQTT FIRST (outside DB transaction to avoid locking)
-			if err := mqtt.PublishUVCommand("ON", 0); err != nil {
+			if err := mqtt.PublishUVCommand("ON", durationSec); err != nil {
 				log.Printf("Error publishing UV command: %v", err)
 				continue
 			}

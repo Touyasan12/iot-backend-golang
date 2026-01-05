@@ -32,7 +32,7 @@ const char* topic_sensor = "aquarium/sensor/dht";
 // ==========================================
 #define RELAY_PIN 5
 #define SERVO1_PIN 12 // Gate Atas (P2)
-#define SERVO2_PIN 13 // Gate Bawah (P4)
+#define SERVO2_PIN 14 // Gate Bawah (P4)
 #define DHTPIN 15
 #define DHTTYPE DHT22
 
@@ -76,9 +76,16 @@ void setup() {
   
   dht.begin();
   
-  if (!rtc.begin()) Serial.println("RTC Error!");
-  if (rtc.lostPower()) rtc.adjust(DateTime(F(_DATE), F(TIME_)));
-  
+  if (!rtc.begin()) {
+    Serial.println("RTC Error!");
+    while (1);
+  }
+
+  // SET WAKTU SEKALI SAJA (UPLOAD SEKALI)
+  rtc.adjust(DateTime(__DATE__, __TIME__));
+  Serial.println("RTC time set from compile time");
+  // ===================
+
   if (!display.begin(SSD1306_SWITCHCAPVCC, 0x3C)) {
     Serial.println("OLED Error!");
     for(;;);
